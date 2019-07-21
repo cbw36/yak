@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.5.0)
-project(yak)
+cmake_minimum_required(VERSION 3.10.0)
+project(yak VERSION 0.2.0 LANGUAGES CXX CUDA)
 
 # Default to C++14 for cross-compatibility
 if(NOT CMAKE_CXX_STANDARD)
@@ -54,7 +54,8 @@ message(STATUS "CMAKE MODULE PATH IS ${CMAKE_MODULE_PATH}")
 
 find_package(OpenMP REQUIRED)
 
-find_package(CUDA REQUIRED)
+#set(CUDA_LIBRARIES PUBLIC ${CUDA_LIBRARIES})
+#find_package(CUDA REQUIRED)
 
 if (CUDA_VERSION_MAJOR GREATER 8)
     set(CUDA_ARCH_BIN "3.0 5.0 5.2 6.0 6.1" CACHE STRING "Specify 'real' GPU architectures to build binaries for, BIN(PTX) format is supported")
@@ -67,65 +68,14 @@ message(STATUS ${CUDA_NVCC_FLAGS})
 
 find_package(OpenCV 3 REQUIRED COMPONENTS core highgui)
 find_package(Eigen3 REQUIRED)
-find_package(PCL 1.9 REQUIRED COMPONENTS common io geometry)  # need to use PCL 1.9 because there's a GCC flag problem when building with 1.8
+find_package(PCL 1.8 REQUIRED COMPONENTS common io geometry)  # need to use PCL 1.9 because there's a GCC flag problem when building with 1.8
 set_directory_properties( PROPERTIES COMPILE_DEFINITIONS "" )
 
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
-if ($ENV{ROS_VERSION} VERSION_EQUAL "1")
-    # Build for ROS 1 using Catkin
-     find_package(catkin)
-
-     catkin_package(
-       INCLUDE_DIRS
-         include
-         ${ROS_INCLUDE_DIRS}
-         ${OpenCV_INCLUDE_DIRS}
-         ${CUDA_INCLUDE_DIRS}
-         ${Eigen_INCLUDE_DIRS}
-       LIBRARIES
-        ${PROJECT_NAME}
-         ${PROJECT_NAME}_frontend
-         ${PROJECT_NAME}_marching_cubes
-         ${CUDA_LIBRARIES}
-         ${CUDA_CUDA_LIBRARY}
-         ${OpenCV_LIBS}
-         ${OpenMP_CXX_LIBRARIES}
-       CATKIN_DEPENDS
-       DEPENDS
-         OpenCV
-         EIGEN3
-         CUDA
-         OpenMP
-         PCL
-   )
-else()
-    # Build for ROS 2 using Ament
-    find_package(ament_cmake REQUIRED)
-
-    ament_export_include_directories(include
-                                    ${OpenCV_INCLUDE_DIRS}
-                                    ${CUDA_INCLUDE_DIRS}
-                                    ${Eigen_INCLUDE_DIRS}
-                                    )
-
-    ament_export_libraries(${PROJECT_NAME}
-                           ${PROJECT_NAME}_frontend
-                           ${PROJECT_NAME}_marching_cubes
-                           ${CUDA_LIBRARIES}
-                           ${CUDA_CUDA_LIBRARY}
-                           ${OpenCV_LIBS}
-                           ${OpenMP_CXX_LIBRARIES}
-                           )
-
-    ament_export_dependencies(OpenCV Eigen3 CUDA OpenMP PCL)
-
-    ament_package()
-endif()
-
 # Core CUDA Library for depth image processing
-cuda_add_library(${PROJECT_NAME}
+add_library(${PROJECT_NAME} SHARED
   src/kfusion/core.cpp
   src/kfusion/device_memory.cpp
   src/kfusion/imgproc.cpp
@@ -135,95 +85,94 @@ cuda_add_library(${PROJECT_NAME}
   src/kfusion/tsdf_volume.cpp
   src/cuda/imgproc.cu
   src/cuda/proj_icp.cu
-  src/cuda/tsdf_volume.cu
-)
-
+  src/cuda/tsdf_volume.cu)
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include>"
-  ${CUDA_INCLUDE_DIRS}
+  "$<INSTALL_INTERFACE:include>")
+target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
   ${PCL_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIR}
   ${OpenCV_INCLUDE_DIRS}
+#  ${CUDA_INCLUDE_DIRS}
 )
-
-target_link_libraries(${PROJECT_NAME}
-  ${CUDA_LIBRARIES}
-  ${CUDA_CUDA_LIBRARY}
+target_link_libraries(${PROJECT_NAME} PUBLIC
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
-)
+  Eigen3::Eigen)
+#list(APPEND PACKAGE_LIBRARIES ${PROJECT_NAME})
 
 # Jmeyer - Create a new interface library that I want to be the front end for future processing. It should support
 # a minimal interface of pushing and image with a pose guess into the server and integrating.
-add_library(${PROJECT_NAME}_frontend
+add_library(${PROJECT_NAME}_frontend SHARED
     src/yak_server.cpp
-    src/kfusion/tsdf_container.cpp
-)
-
+    src/kfusion/tsdf_container.cpp)
 target_include_directories(${PROJECT_NAME}_frontend PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
-  ${EIGEN3_INCLUDE_DIR}
-  ${PCL_INCLUDE_DIRS}
-)
-
+  ${PCL_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME}_frontend SYSTEM PUBLIC
+  ${PCL_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}_frontend
- ${PROJECT_NAME}
- ${PCL_LIBRARIES}
-)
+  ${PROJECT_NAME}
+  ${PCL_LIBRARIES}
+  Eigen3::Eigen)
+list(APPEND PACKAGE_LIBRARIES ${PROJECT_NAME}_frontend)
 
 # Marching Cubes Meshing Impl
-add_library(${PROJECT_NAME}_marching_cubes
+add_library(${PROJECT_NAME}_marching_cubes SHARED
   src/mc/marching_cubes.cpp
   src/mc/marching_cubes_tables.cpp)
-
 target_include_directories(${PROJECT_NAME}_marching_cubes PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include>"
-  ${EIGEN3_INCLUDE_DIR}
-  ${PCL_INCLUDE_DIRS}
-)
-
+  "$<INSTALL_INTERFACE:include>")
+target_include_directories(${PROJECT_NAME}_marching_cubes PUBLIC
+  ${PCL_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}_marching_cubes
     PUBLIC
   ${PROJECT_NAME}
   OpenMP::OpenMP_CXX
-)
+  Eigen3::Eigen)
+list(APPEND PACKAGE_LIBRARIES ${PROJECT_NAME}_marching_cubes)
 
 # Jmeyer Marching Cubes
 add_executable(marching_cubes_tests src/mc/marching_cubes_tests.cpp)
-
 target_include_directories(marching_cubes_tests PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include>"
-  ${EIGEN3_INCLUDE_DIR}
-  ${PCL_INCLUDE_DIRS}
-)
-
+  "$<INSTALL_INTERFACE:include>")
+target_include_directories(marching_cubes_tests SYSTEM PUBLIC
+  ${PCL_INCLUDE_DIRS})
 target_link_libraries(marching_cubes_tests
-    ${PROJECT_NAME}_marching_cubes
-    ${PCL_LIBRARIES}
-)
-
-
-if ($ENV{ROS_VERSION} VERSION_EQUAL "1")
-    set(ROS_LIB_DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION})
-    set(ROS_BIN_DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-else()
-    set(ROS_LIB_DESTINATION lib)
-    set(ROS_BIN_DESTINATION bin)
-endif()
-
-set(ROS_INCLUDE_DESTINATION include)
-
+  ${PROJECT_NAME}_marching_cubes
+  ${PCL_LIBRARIES}
+  Eigen3::Eigen)
 
 install(DIRECTORY include/${PROJECT_NAME}
-  DESTINATION ${ROS_INCLUDE_DESTINATION}
-)
+  DESTINATION include
+  FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
+  PATTERN "*.svn" EXCLUDE)
 
-install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_frontend ${PROJECT_NAME}_marching_cubes
-  ARCHIVE DESTINATION ${ROS_LIB_DESTINATION}
-  LIBRARY DESTINATION ${ROS_LIB_DESTINATION}
-  RUNTIME DESTINATION ${ROS_BIN_DESTINATION}
-  )
+install(FILES package.xml DESTINATION share/${PROJECT_NAME})
+
+install(TARGETS ${PROJECT_NAME} ${PACKAGE_LIBRARIES}
+  EXPORT ${PROJECT_NAME}-targets DESTINATION lib)
+install(EXPORT ${PROJECT_NAME}-targets
+  NAMESPACE yak:: DESTINATION lib/cmake/${PROJECT_NAME})
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+  ${CMAKE_CURRENT_LIST_DIR}/cmake/${PROJECT_NAME}-config.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake
+  INSTALL_DESTINATION lib/cmake/${PROJECT_NAME}
+  NO_CHECK_REQUIRED_COMPONENTS_MACRO)
+
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake
+  VERSION ${PROJECT_VERSION} COMPATIBILITY ExactVersion)
+
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
+  DESTINATION lib/cmake/${PROJECT_NAME})
+
+export(EXPORT ${PROJECT_NAME}-targets FILE
+  ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-targets.cmake)
+
